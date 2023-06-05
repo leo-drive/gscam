@@ -45,6 +45,7 @@ public:
 private:
   bool configure();
   bool init_stream();
+  void update_stream();
   void publish_stream();
   void cleanup_stream();
 
@@ -70,12 +71,24 @@ private:
   std::string camera_name_;
   std::string camera_info_url_;
   bool use_sensor_data_qos_;
+  int camera_frame_rate_;
 
   // ROS Inteface
   // Calibration between ros::Time and gst timestamps
   uint64_t time_offset_;
   camera_info_manager::CameraInfoManager camera_info_manager_;
   image_transport::CameraPublisher camera_pub_;
+
+  // ROS Timer
+  rclcpp::TimerBase::SharedPtr timer_;
+
+  // Camera message
+  sensor_msgs::msg::Image img_msg_;
+  sensor_msgs::msg::CompressedImage comp_img_msg_;
+
+  // Camera Info message
+  sensor_msgs::msg::CameraInfo cinfo_msg_;
+
   // Case of a jpeg only publisher
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr jpeg_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr cinfo_pub_;

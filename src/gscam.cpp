@@ -45,6 +45,12 @@ GSCam::GSCam(const rclcpp::NodeOptions & options)
   camera_info_manager_(this),
   stop_signal_(false)
 {
+  if (!configure()) {
+    RCLCPP_FATAL(get_logger(), "Failed to configure gscam!");
+    return;
+  }
+  int period_ms = 1000 / camera_frame_rate_;
+  timer_ = this->create_wall_timer(std::chrono::milliseconds(period_ms), std::bind(&GSCam::publish_stream, this));
   pipeline_thread_ = std::thread(
     [this]()
     {
@@ -135,6 +141,7 @@ bool GSCam::configure()
   }
 
   use_sensor_data_qos_ = declare_parameter("use_sensor_data_qos", false);
+  camera_frame_rate_ = declare_parameter("camera_frame_rate", 15);
 
   return true;
 }
@@ -253,18 +260,18 @@ bool GSCam::init_stream()
   if (image_encoding_ == "jpeg") {
     jpeg_pub_ =
       create_publisher<sensor_msgs::msg::CompressedImage>(
-      "camera/image_raw/compressed", qos);
+      "image_raw/compressed", qos);
     cinfo_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
-      "camera/camera_info", qos);
+      "camera_info", qos);
   } else {
     camera_pub_ = image_transport::create_camera_publisher(
-      this, "camera/image_raw", qos.get_rmw_qos_profile());
+      this, "image_raw", qos.get_rmw_qos_profile());
   }
 
   return true;
 }
 
-void GSCam::publish_stream()
+void GSCam::update_stream()
 {
   RCLCPP_INFO_STREAM(get_logger(), "Publishing stream...");
 
@@ -349,26 +356,22 @@ void GSCam::publish_stream()
     gst_structure_get_int(structure, "height", &height_);
 
     // Update header information
-    sensor_msgs::msg::CameraInfo cur_cinfo = camera_info_manager_.getCameraInfo();
-    sensor_msgs::msg::CameraInfo::SharedPtr cinfo;
-    cinfo.reset(new sensor_msgs::msg::CameraInfo(cur_cinfo));
+    cinfo_msg_ = camera_info_manager_.getCameraInfo();
+
     if (use_gst_timestamps_) {
-      cinfo->header.stamp = rclcpp::Time(GST_TIME_AS_NSECONDS(buf->pts + bt) + time_offset_);
+      cinfo_msg_.header.stamp = rclcpp::Time(GST_TIME_AS_NSECONDS(buf->pts + bt) + time_offset_);
     } else {
-      cinfo->header.stamp = now();
+      cinfo_msg_.header.stamp = now();
     }
     // RCLCPP_INFO(get_logger(), "Image time stamp: %.3f",cinfo->header.stamp.toSec());
-    cinfo->header.frame_id = frame_id_;
+    cinfo_msg_.header.frame_id = frame_id_;
     if (image_encoding_ == "jpeg") {
-      sensor_msgs::msg::CompressedImage::SharedPtr img(new sensor_msgs::msg::CompressedImage());
-      img->header = cinfo->header;
-      img->format = "jpeg";
-      img->data.resize(buf_size);
+      comp_img_msg_.header = cinfo_msg_.header;
+      comp_img_msg_.format = "jpeg";
+      comp_img_msg_.data.resize(buf_size);
       std::copy(
         buf_data, (buf_data) + (buf_size),
-        img->data.begin());
-      jpeg_pub_->publish(*img);
-      cinfo_pub_->publish(*cinfo);
+        comp_img_msg_.data.begin());
     } else {
       // Complain if the returned buffer is smaller than we expect
       const unsigned int expected_frame_size =
@@ -381,30 +384,24 @@ void GSCam::publish_stream()
             buf_size << " bytes. (make sure frames are correctly encoded)");
       }
 
-      // Construct Image message
-      sensor_msgs::msg::Image::SharedPtr img(new sensor_msgs::msg::Image());
-
-      img->header = cinfo->header;
+      img_msg_.header = cinfo_msg_.header;
 
       // Image data and metadata
-      img->width = width_;
-      img->height = height_;
-      img->encoding = image_encoding_;
-      img->is_bigendian = false;
-      img->data.resize(expected_frame_size);
+      img_msg_.width = width_;
+      img_msg_.height = height_;
+      img_msg_.encoding = image_encoding_;
+      img_msg_.is_bigendian = false;
+      img_msg_.data.resize(expected_frame_size);
 
       // Copy only the data we received
       // Since we're publishing shared pointers, we need to copy the image so
       // we can free the buffer allocated by gstreamer
-      img->step = width_ * sensor_msgs::image_encodings::numChannels(image_encoding_);
+      img_msg_.step = width_ * sensor_msgs::image_encodings::numChannels(image_encoding_);
 
       std::copy(
         buf_data,
         (buf_data) + (buf_size),
-        img->data.begin());
-
-      // Publish the image/info
-      camera_pub_.publish(img, cinfo);
+        img_msg_.data.begin());
     }
 
     // Release the buffer
@@ -413,6 +410,17 @@ void GSCam::publish_stream()
       gst_memory_unref(memory);
       gst_sample_unref(sample);
     }
+  }
+}
+
+void GSCam::publish_stream()
+{
+  if (image_encoding_ == "jpeg") {
+    jpeg_pub_->publish(comp_img_msg_);
+    cinfo_pub_->publish(cinfo_msg_);
+  } else {
+    // Publish the image/info
+    camera_pub_.publish(img_msg_, cinfo_msg_);
   }
 }
 
@@ -429,11 +437,6 @@ void GSCam::cleanup_stream()
 
 void GSCam::run()
 {
-  if (!this->configure()) {
-    RCLCPP_FATAL(get_logger(), "Failed to configure gscam!");
-    return;
-  }
-
   while (!stop_signal_ && rclcpp::ok()) {
     if (!this->init_stream()) {
       RCLCPP_FATAL(get_logger(), "Failed to initialize gscam stream!");
@@ -441,7 +444,7 @@ void GSCam::run()
     }
 
     // Block while publishing
-    this->publish_stream();
+    this->update_stream();
 
     this->cleanup_stream();
 
