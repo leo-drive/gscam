@@ -26,6 +26,7 @@ extern "C" {
 
 #include "image_transport/image_transport.hpp"
 #include "camera_info_manager/camera_info_manager.hpp"
+#include "cv_bridge/cv_bridge.h"
 
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
@@ -142,6 +143,7 @@ bool GSCam::configure()
 
   use_sensor_data_qos_ = declare_parameter("use_sensor_data_qos", false);
   camera_frame_rate_ = declare_parameter("camera_frame_rate", 15);
+  enable_rectifying_ = declare_parameter("enable_rectifying", true);
 
   return true;
 }
@@ -267,6 +269,8 @@ bool GSCam::init_stream()
     camera_pub_ = image_transport::create_camera_publisher(
       this, "image_raw", qos.get_rmw_qos_profile());
   }
+  camera_pub_rect_ = create_publisher<sensor_msgs::msg::Image>(
+    "image_rect",qos);
 
   return true;
 }
@@ -421,6 +425,23 @@ void GSCam::publish_stream()
   } else {
     // Publish the image/info
     camera_pub_.publish(img_msg_, cinfo_msg_);
+  }
+  if (enable_rectifying_) {
+    sensor_msgs::msg::Image img_rect_msg;
+    try {
+      cv_bridge::CvImage img_bridge_rect =
+        cv_bridge::CvImage(img_msg_.header, sensor_msgs::image_encodings::RGB8);
+      (void)img_bridge_rect;
+
+      cv_bridge::CvImagePtr cv_img_raw = cv_bridge::toCvCopy(img_msg_, img_msg_.encoding);
+      pinhole_model_.fromCameraInfo(cinfo_msg_);
+      pinhole_model_.rectifyImage(cv_img_raw->image, img_bridge_rect.image);
+
+      img_bridge_rect.toImageMsg(img_rect_msg);
+      camera_pub_rect_->publish(std::move(img_rect_msg));
+    } catch (...) {
+      RCLCPP_WARN(get_logger(), "Runtime error, publish_rectified_image.");
+    }
   }
 }
 

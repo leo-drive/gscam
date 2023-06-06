@@ -24,6 +24,8 @@ extern "C" {
 }
 
 #include "rclcpp/rclcpp.hpp"
+#include "image_geometry/pinhole_camera_model.h"
+
 
 #include "image_transport/image_transport.hpp"
 #include "camera_info_manager/camera_info_manager.hpp"
@@ -72,6 +74,10 @@ private:
   std::string camera_info_url_;
   bool use_sensor_data_qos_;
   int camera_frame_rate_;
+  bool enable_rectifying_;
+
+  // Camera model
+  image_geometry::PinholeCameraModel pinhole_model_;
 
   // ROS Inteface
   // Calibration between ros::Time and gst timestamps
@@ -92,6 +98,9 @@ private:
   // Case of a jpeg only publisher
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr jpeg_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr cinfo_pub_;
+
+  // Rectifier publisher
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr camera_pub_rect_;
 
   // Poll gstreamer on a separate thread
   std::thread pipeline_thread_;
