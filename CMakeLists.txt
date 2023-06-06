@@ -11,6 +11,8 @@ pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
 find_package(ament_cmake REQUIRED)
 find_package(class_loader REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(image_geometry REQUIRED)
+find_package(cv_bridge REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -30,6 +32,8 @@ target_link_libraries(gscam
 ament_target_dependencies(gscam
   "class_loader"
   "image_transport"
+  "image_geometry"
+  "cv_bridge"
   "rclcpp"
   "rclcpp_components"
   "sensor_msgs"
